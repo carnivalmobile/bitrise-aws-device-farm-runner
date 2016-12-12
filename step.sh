@@ -97,9 +97,14 @@ function validate_android_inputs {
 }
 
 function get_test_package_arn {
-    # Get most recent test bundle ARN
-    test_package_arn=$(aws devicefarm list-uploads --arn="$device_farm_project" --query="uploads[?name=='${test_package_name}'] | max_by(@, &created).arn" --no-paginate --output=text)
-    #test_package_arn=''
+
+    if [[ "$test_type" != "BUILTIN_FUZZ" ]] ; then
+        # Get most recent test bundle ARN
+        test_package_arn=$(aws devicefarm list-uploads --arn="$device_farm_project" --query="uploads[?name=='${test_package_name}'] | max_by(@, &created).arn" --no-paginate --output=text)
+    else
+        # No test package required for FUZZ test.
+        test_package_arn=''
+    fi
 
     echo_details "Got test package ARN:'${test_package_arn}'"
 }
@@ -153,10 +158,13 @@ function device_farm_run {
     echo_details "* app_package_path: $app_package_path"
     echo_details "* upload_type: $upload_type"
 
-    validate_required_variable "test_package_arn" "${test_package_arn}"
     validate_required_variable "device_pool" "${device_pool}"
     validate_required_variable "app_package_path" "${app_package_path}"
     validate_required_variable "upload_type" "${upload_type}"
+
+    if [[ "$test_type" != "BUILTIN_FUZZ" ]] ; then
+        validate_required_variable "test_package_arn" "${test_package_arn}"
+    fi
 
     # Intialize upload
     local app_filename=$(basename "$app_package_path")
@@ -188,7 +196,13 @@ function device_farm_run {
     local run_params=(--project-arn="$device_farm_project")
     run_params+=(--device-pool-arn="$device_pool")
     run_params+=(--app-arn="$app_arn")
-    run_params+=(--test="{\"type\": \"${test_type}\",\"testPackageArn\": \"${test_package_arn}\",\"parameters\": {\"TestEnvVar\": \"foo\"}}")
+
+    if [[ "$test_package_arn" != "" ]] ; then
+        run_params+=(--test="{\"type\": \"${test_type}\",\"testPackageArn\": \"${test_package_arn}\",\"parameters\": {\"TestEnvVar\": \"foo\"}}")
+    else
+        run_params+=(--test="{\"type\": \"${test_type}\",\"parameters\": {\"TestEnvVar\": \"foo\"}}")
+    fi
+
     run_params+=(--output=json)
 
     if [ ! -z "$run_name_prefix" ]; then
@@ -298,8 +312,12 @@ echo
 validate_required_input "access_key_id" "${access_key_id}"
 validate_required_input "secret_access_key" "${secret_access_key}"
 validate_required_input "device_farm_project" "${device_farm_project}"
-validate_required_input "test_package_name" "${test_package_name}"
 validate_required_input "test_type" "${test_type}"
+
+if [[ "$test_type" != "BUILTIN_FUZZ" ]] ; then
+    # All tests other than BUILTIN_FUZZ require a test package
+    validate_required_input "test_package_name" "${test_package_name}"
+fi
 
 options=("ios"  "android" "ios+android")
 validate_required_input_with_options "platform" "${platform}" "${options[@]}"
