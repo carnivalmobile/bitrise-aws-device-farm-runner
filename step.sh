@@ -99,8 +99,10 @@ function validate_android_inputs {
 function get_test_package_arn {
 
     if [[ "$test_type" != "BUILTIN_FUZZ" ]] ; then
-        # Get most recent test bundle ARN
-        test_package_arn=$(aws devicefarm list-uploads --arn="$device_farm_project" --query="uploads[?name=='${test_package_name}'] | max_by(@, &created).arn" --no-paginate --output=text)
+        # Upload the test package and get the ARN back. Helpfully the test
+        # package type is always the same as the test type with _TEST_PACKAGE
+        # suffix.
+        upload_file test_package_arn "$test_package_name" "${test_type}_TEST_PACKAGE"
     else
         # No test package required for FUZZ test.
         test_package_arn=''
@@ -145,6 +147,47 @@ function get_run_final_result {
 
 }
 
+function upload_file {
+    # This function uploads files to DeviceFarm and returns the ARN. It is used
+    # for both the test package and the application binary.
+    local __return_arn="$1"
+    local upload_path="$2"
+    local upload_type="$3"
+    validate_required_variable "upload_path" "${upload_path}"
+    validate_required_variable "upload_type" "${upload_type}"
+
+    # Intialize upload
+    local upload_filename=$(basename "$upload_path")
+    local create_upload_response=$(aws devicefarm create-upload --project-arn="$device_farm_project" --name="$upload_filename" --type="$upload_type" --query='upload.[arn, url]' --output=text)
+    local upload_arn=$(echo $create_upload_response|cut -d' ' -f1)
+    local upload_url=$(echo $create_upload_response|cut -d' ' -f2)
+    echo_details "Initialized upload of package '$upload_filename' with ARN '$upload_arn'"
+
+    # Perform upload
+    echo_details "Beginning upload..."
+    curl -T "$upload_path" "$upload_url"
+    echo_details "Upload finished. Polling for status."
+
+    # Poll for successful upload
+    local upload_status=$(get_upload_status "$upload_arn")
+    echo_details "Upload status: $upload_status"
+    while [ ! "$upload_status" == 'SUCCEEDED' ]; do
+        if [ "$upload_status" == 'FAILED' ]; then
+            echo_fail 'Upload failed!'
+        fi
+
+        echo_details "Upload not yet processed; waiting. (Status=$upload_status)"
+        sleep 10s
+        upload_status=$(get_upload_status "$upload_arn")
+    done
+    echo_details 'Upload successful! Starting run...'
+
+    # We hae to use a trick to get results back from the function. Because we are
+    # using echo, we can't simply echo out the results and use command subsitution
+    # so we take a return value as an argument and set it here.
+    eval $__return_arn="$upload_arn"
+}
+
 function device_farm_run {
     local run_platform="$1"
     local device_pool="$2"
@@ -166,31 +209,8 @@ function device_farm_run {
         validate_required_variable "test_package_arn" "${test_package_arn}"
     fi
 
-    # Intialize upload
-    local app_filename=$(basename "$app_package_path")
-    local create_upload_response=$(aws devicefarm create-upload --project-arn="$device_farm_project" --name="$app_filename" --type="$upload_type" --query='upload.[arn, url]' --output=text)
-    local app_arn=$(echo $create_upload_response|cut -d' ' -f1)
-    local app_upload_url=$(echo $create_upload_response|cut -d' ' -f2)
-    echo_details "Initialized upload of package '$app_filename' for app ARN '$app_arn'"
-
-    # Perform upload
-    echo_details "Beginning upload"
-    curl -T "$app_package_path" "$app_upload_url"
-    echo_details "Upload finished. Polling for status."
-
-    # Poll for successful upload
-    local upload_status=$(get_upload_status "$app_arn")
-    echo_details "Upload status: $upload_status"
-    while [ ! "$upload_status" == 'SUCCEEDED' ]; do
-        if [ "$upload_status" == 'FAILED' ]; then
-            echo_fail 'Upload failed!'
-        fi
-
-        echo_details "Upload not yet processed; waiting. (Status=$upload_status)"
-        sleep 10s
-        upload_status=$(get_upload_status "$app_arn")
-    done
-    echo_details 'Upload successful! Starting run...'
+    # Upload application file
+    upload_file app_arn "$app_package_path" "$upload_type"
 
     # Start run
     local run_params=(--project-arn="$device_farm_project")

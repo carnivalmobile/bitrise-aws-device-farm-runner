@@ -1,9 +1,10 @@
 # Amazon Device Farm Runner
-Deploys app to device farm and starts a test run with a preconfigured test package and device pool.
+Deploys app to device farm and starts a test run with a preconfigured test
+package and device pool. This step includes functionality to upload both the
+application binary and the associated test package file.
 
-This Step requires an Amazon Device Farm registration. To register an account, [click here](https://aws.amazon.com/device-farm/)
-
-Use the [aws-device-farm-file-deploy](https://github.com/peartherapeutics/bitrise-aws-device-farm-file-deploy) step to upload your latest test package (and extra app data if required) before this step runs.
+This Step requires an Amazon Device Farm registration. To register an account,
+[click here](https://aws.amazon.com/device-farm/)
 
 ## How to use this Step
 
